@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Capybara Dropship</title>
+    <style>
+      :root {
+        --bg: #0f1115;
+        --card: #171a21;
+        --text: #e6e8ee;
+        --muted: #9aa3b2;
+        --accent: #6ea8fe;
+        --border: #2a2f3a;
+      }
+      body { font-family: system-ui, sans-serif; margin: 24px; background: var(--bg); color: var(--text); }
+      h1 { margin-bottom: 8px; }
+      .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+      .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+      table { border-collapse: collapse; width: 100%; margin-top: 12px; }
+      th, td { border-bottom: 1px solid var(--border); padding: 10px; text-align: left; }
+      th { color: var(--muted); font-weight: 600; }
+      .dropzone { border: 2px dashed #3b4252; padding: 16px; margin-top: 12px; border-radius: 12px; background: #12151c; }
+      .path { color: var(--muted); }
+      button, select { padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border); background: #1d2230; color: var(--text); }
+      button:hover { border-color: var(--accent); }
+      a { color: var(--accent); text-decoration: none; }
+      a:hover { text-decoration: underline; }
+      .icon-link { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--border); background: #1d2230; color: var(--text); }
+      .icon-link:hover { border-color: var(--accent); text-decoration: none; }
+      .toolbar { display: flex; gap: 8px; align-items: center; }
+      .modal { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,0.6); }
+      .modal-content { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; min-width: 320px; }
+      .progress { height: 10px; background: #0f1115; border-radius: 999px; overflow: hidden; border: 1px solid var(--border); }
+      .progress-bar { height: 100%; width: 0%; background: linear-gradient(90deg, #6ea8fe, #8bd5ff); }
+      .muted { color: var(--muted); font-size: 13px; }
+    </style>
+  </head>
+  <body>
+    <h1>Capybara Dropship</h1>
+    <div class="card">
+      <div class="row">
+        <div class="path">Path: <span id="path">/</span></div>
+        <button id="up">Up</button>
+        <button id="refresh">Refresh</button>
+        <div class="toolbar">
+          <button id="download-selected">Download Selected</button>
+          <select id="download-format">
+            <option value="zip">.zip</option>
+            <option value="tar">.tar</option>
+          </select>
+          <label class="muted"><input type="checkbox" id="select-all" /> Select all</label>
+        </div>
+      </div>
+
+      <div class="dropzone" id="dropzone">
+        Drag & drop files here or <input type="file" id="file-input" multiple />
+      </div>
+
+      <table>
+        <thead>
+          <tr><th></th><th>Name</th><th>Type</th><th>Size</th><th></th></tr>
+        </thead>
+        <tbody id="list"></tbody>
+      </table>
+    </div>
+
+    <div class="modal" id="upload-modal">
+      <div class="modal-content">
+        <div><strong>Uploading…</strong></div>
+        <div class="progress" style="margin:10px 0;"><div class="progress-bar" id="upload-bar"></div></div>
+        <div class="muted" id="upload-stats">0%</div>
+      </div>
+    </div>
+
+    <script>
+      const params = new URLSearchParams(window.location.search);
+      const token = params.get('token');
+      let currentPath = params.get('path') || '';
+
+      function tokenParam() {
+        return token ? `&token=${encodeURIComponent(token)}` : '';
+      }
+
+      function updateUrl(push = false) {
+        const url = new URL(window.location.href);
+        if (currentPath) {
+          url.searchParams.set('path', currentPath);
+        } else {
+          url.searchParams.delete('path');
+        }
+        if (token) {
+          url.searchParams.set('token', token);
+        }
+        if (push) {
+          window.history.pushState({ path: currentPath }, '', url);
+        } else {
+          window.history.replaceState({ path: currentPath }, '', url);
+        }
+      }
+
+      async function loadList() {
+        const res = await fetch(`/api/list?path=${encodeURIComponent(currentPath)}${tokenParam()}`);
+        if (!res.ok) {
+          alert('Unable to list files. Ask admin to set directory or provide token.');
+          return;
+        }
+        const entries = await res.json();
+        document.getElementById('path').textContent = '/' + currentPath;
+        updateUrl();
+        const tbody = document.getElementById('list');
+        tbody.innerHTML = '';
+        document.getElementById('select-all').checked = false;
+        for (const entry of entries) {
+          const tr = document.createElement('tr');
+          const checkTd = document.createElement('td');
+          const nameTd = document.createElement('td');
+          const typeTd = document.createElement('td');
+          const sizeTd = document.createElement('td');
+          const actionTd = document.createElement('td');
+
+          const checkbox = document.createElement('input');
+          checkbox.type = 'checkbox';
+          checkbox.dataset.path = pathJoin(currentPath, entry.name);
+          checkTd.appendChild(checkbox);
+
+          if (entry.is_dir) {
+            const link = document.createElement('a');
+            link.href = '#';
+            link.textContent = entry.name;
+            link.onclick = (e) => {
+              e.preventDefault();
+              currentPath = currentPath ? `${currentPath}/${entry.name}` : entry.name;
+              updateUrl(true);
+              loadList();
+            };
+            nameTd.appendChild(link);
+            typeTd.textContent = 'dir';
+            actionTd.innerHTML = `
+              <button data-dir-zip>ZIP</button>
+              <button data-dir-tar>TAR</button>
+            `;
+            actionTd.querySelector('[data-dir-zip]').onclick = () => downloadDir(entry.name, 'zip');
+            actionTd.querySelector('[data-dir-tar]').onclick = () => downloadDir(entry.name, 'tar');
+          } else {
+            const isImage = /\.(png|jpe?g|gif|webp)$/i.test(entry.name);
+            if (isImage) {
+              const img = document.createElement('img');
+              img.src = `/api/thumbnail?path=${encodeURIComponent(pathJoin(currentPath, entry.name))}${tokenParam()}`;
+              img.alt = entry.name;
+              img.style.width = '48px';
+              img.style.height = '48px';
+              img.style.objectFit = 'cover';
+              img.style.marginRight = '8px';
+              nameTd.appendChild(img);
+            }
+            const view = document.createElement('a');
+            view.href = `/api/file?path=${encodeURIComponent(pathJoin(currentPath, entry.name))}${tokenParam()}`;
+            view.textContent = entry.name;
+            view.target = '_blank';
+            nameTd.appendChild(view);
+            typeTd.textContent = 'file';
+            const dl = document.createElement('a');
+            dl.href = `/api/download?path=${encodeURIComponent(pathJoin(currentPath, entry.name))}${tokenParam()}`;
+            dl.className = 'icon-link';
+            dl.title = 'Download';
+            dl.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 3v12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M7 10l5 5 5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 21h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+            actionTd.appendChild(dl);
+          }
+
+          sizeTd.textContent = humanSize(entry.size);
+          tr.appendChild(checkTd);
+          tr.appendChild(nameTd);
+          tr.appendChild(typeTd);
+          tr.appendChild(sizeTd);
+          tr.appendChild(actionTd);
+          tbody.appendChild(tr);
+        }
+      }
+
+      function pathJoin(base, name) {
+        if (!base) return name;
+        return `${base}/${name}`;
+      }
+
+      async function downloadDir(name, format) {
+        const path = pathJoin(currentPath, name);
+        const url = `/api/download?path=${encodeURIComponent(path)}&archive=${encodeURIComponent(format)}${tokenParam()}`;
+        window.location.href = url;
+      }
+
+      function humanSize(bytes) {
+        if (!bytes) return '-';
+        const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        let size = bytes;
+        let idx = 0;
+        while (size >= 1024 && idx < units.length - 1) {
+          size /= 1024;
+          idx++;
+        }
+        return `${size.toFixed(size >= 10 || idx === 0 ? 0 : 1)} ${units[idx]}`;
+      }
+
+      async function uploadFiles(files) {
+        const total = Array.from(files).reduce((sum, f) => sum + f.size, 0);
+        const modal = document.getElementById('upload-modal');
+        const bar = document.getElementById('upload-bar');
+        const stats = document.getElementById('upload-stats');
+        modal.style.display = 'flex';
+
+        const form = new FormData();
+        for (const file of files) {
+          form.append('files', file, file.name);
+        }
+
+        const start = performance.now();
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', `/api/upload?path=${encodeURIComponent(currentPath)}${tokenParam()}`);
+        xhr.upload.onprogress = (e) => {
+          if (!e.lengthComputable) return;
+          const pct = Math.round((e.loaded / total) * 100);
+          const elapsed = (performance.now() - start) / 1000;
+          const speed = e.loaded / Math.max(elapsed, 0.1);
+          bar.style.width = `${pct}%`;
+          stats.textContent = `${pct}% • ${humanSize(speed)}/s`;
+        };
+        xhr.onload = () => {
+          modal.style.display = 'none';
+          if (xhr.status >= 200 && xhr.status < 300) {
+            loadList();
+          } else {
+            alert('Upload failed');
+          }
+        };
+        xhr.onerror = () => {
+          modal.style.display = 'none';
+          alert('Upload failed');
+        };
+        xhr.send(form);
+      }
+
+      document.getElementById('up').addEventListener('click', () => {
+        if (!currentPath) return;
+        const parts = currentPath.split('/');
+        parts.pop();
+        currentPath = parts.join('/');
+        updateUrl(true);
+        loadList();
+      });
+
+      document.getElementById('refresh').addEventListener('click', loadList);
+
+      document.getElementById('download-selected').addEventListener('click', () => {
+        const checked = Array.from(document.querySelectorAll('input[type="checkbox"][data-path]:checked'));
+        if (!checked.length) return;
+        const paths = checked.map(el => el.dataset.path);
+        const format = document.getElementById('download-format').value;
+        createPack(paths, format);
+      });
+
+      async function createPack(paths, archive) {
+        const payload = { paths, archive };
+        if (token) payload.token = token;
+        const res = await fetch('/api/pack', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        if (!res.ok) {
+          alert('Failed to create download');
+          return;
+        }
+        const data = await res.json();
+        const url = `/api/download?pack=${encodeURIComponent(data.id)}&archive=${encodeURIComponent(data.archive || archive)}${tokenParam()}`;
+        window.location.href = url;
+      }
+
+      document.getElementById('select-all').addEventListener('change', (e) => {
+        const checked = e.target.checked;
+        document.querySelectorAll('input[type="checkbox"][data-path]').forEach(el => {
+          el.checked = checked;
+        });
+      });
+
+      document.getElementById('file-input').addEventListener('change', (e) => {
+        uploadFiles(e.target.files);
+      });
+
+      const dropzone = document.getElementById('dropzone');
+      dropzone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropzone.style.borderColor = '#666';
+      });
+      dropzone.addEventListener('dragleave', () => {
+        dropzone.style.borderColor = '#bbb';
+      });
+      dropzone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropzone.style.borderColor = '#bbb';
+        uploadFiles(e.dataTransfer.files);
+      });
+
+      window.addEventListener('popstate', (e) => {
+        const freshParams = new URLSearchParams(window.location.search);
+        currentPath = e.state?.path || freshParams.get('path') || '';
+        loadList();
+      });
+
+      loadList();
+    </script>
+  </body>
+</html>

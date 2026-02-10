@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Dropship Admin</title>
+    <style>
+      :root {
+        --bg: #0f1115;
+        --card: #171a21;
+        --text: #e6e8ee;
+        --muted: #9aa3b2;
+        --accent: #6ea8fe;
+        --border: #2a2f3a;
+      }
+      body { font-family: system-ui, sans-serif; margin: 24px; background: var(--bg); color: var(--text); }
+      h1 { margin-bottom: 8px; }
+      .row { display: flex; gap: 16px; flex-wrap: wrap; }
+      .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; min-width: 280px; }
+      input, button { padding: 8px 12px; font-size: 14px; border-radius: 8px; border: 1px solid var(--border); background: #1d2230; color: var(--text); }
+      button:hover { border-color: var(--accent); }
+      code { background: #12151c; padding: 2px 6px; border-radius: 6px; color: var(--muted); }
+      ul { padding-left: 18px; color: var(--muted); }
+      a { color: var(--accent); }
+    </style>
+  </head>
+  <body>
+    <h1>Capybara Dropship Admin</h1>
+
+    <div class="row">
+      <div class="card">
+        <h3>Serving directory</h3>
+        <div>Current: <code id="current-dir">(not set)</code></div>
+        <div style="margin-top:8px;">
+          <input id="dir-input" placeholder="/path/to/share" size="32" />
+          <button id="set-dir">Set</button>
+        </div>
+        <div style="margin-top:12px;">
+          <button id="browse-root">Browse…</button>
+          <div id="browser" style="margin-top:8px; display:none;">
+            <div><strong>Browse:</strong> <span id="browse-path">/</span></div>
+            <div id="browse-list" style="margin-top:6px;"></div>
+            <button id="browse-up" style="margin-top:8px;">Up</button>
+            <button id="browse-select" style="margin-top:8px;">Select this folder</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Access token</h3>
+        <div>Current: <code id="token">(not set)</code></div>
+        <div style="margin-top:8px;">
+          <input id="token-input" placeholder="optional token" size="24" />
+          <button id="set-token">Set</button>
+          <button id="gen-token">Generate</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px;">
+      <h3>LAN URLs</h3>
+      <ul id="ip-list"></ul>
+    </div>
+
+    <script>
+      let browsePath = '';
+
+      async function fetchStatus() {
+        const res = await fetch('/api/status');
+        const data = await res.json();
+        document.getElementById('current-dir').textContent = data.base_dir ?? '(not set)';
+
+        const tokenRes = await fetch('/api/admin/token');
+        if (tokenRes.ok) {
+          const tokenData = await tokenRes.json();
+          document.getElementById('token').textContent = tokenData.token ?? '(not set)';
+        }
+
+        const list = document.getElementById('ip-list');
+        list.innerHTML = '';
+        const tokenValue = document.getElementById('token').textContent;
+        const tokenParam = tokenValue && tokenValue !== '(not set)' ? `?token=${encodeURIComponent(tokenValue)}` : '';
+        for (const ip of data.ips) {
+          const li = document.createElement('li');
+          li.textContent = `http://${ip}:${data.port}/${tokenParam}`;
+          list.appendChild(li);
+        }
+      }
+
+      document.getElementById('set-dir').addEventListener('click', async () => {
+        const path = document.getElementById('dir-input').value.trim();
+        if (!path) return;
+        await fetch('/api/admin/dir', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path })
+        });
+        await fetchStatus();
+      });
+
+      document.getElementById('browse-root').addEventListener('click', async () => {
+        document.getElementById('browser').style.display = 'block';
+        browsePath = '';
+        await loadBrowser();
+      });
+
+      document.getElementById('browse-up').addEventListener('click', async () => {
+        if (!browsePath) return;
+        const parts = browsePath.split('/').filter(Boolean);
+        parts.pop();
+        browsePath = parts.join('/');
+        await loadBrowser();
+      });
+
+      document.getElementById('browse-select').addEventListener('click', async () => {
+        const path = browsePath ? `/${browsePath}` : '/';
+        await fetch('/api/admin/dir', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path })
+        });
+        await fetchStatus();
+      });
+
+      async function loadBrowser() {
+        const pathParam = browsePath ? `?path=/${browsePath}` : '';
+        const res = await fetch(`/api/admin/list${pathParam}`);
+        const list = await res.json();
+        document.getElementById('browse-path').textContent = browsePath ? `/${browsePath}` : '/';
+        const container = document.getElementById('browse-list');
+        container.innerHTML = '';
+        for (const entry of list) {
+          const btn = document.createElement('button');
+          btn.textContent = entry.name;
+          btn.style.marginRight = '8px';
+          btn.onclick = async () => {
+            const trimmed = entry.path.replace(/^\/+/, '');
+            browsePath = trimmed;
+            await loadBrowser();
+          };
+          container.appendChild(btn);
+        }
+      }
+
+      document.getElementById('set-token').addEventListener('click', async () => {
+        const token = document.getElementById('token-input').value.trim();
+        await fetch('/api/admin/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token })
+        });
+        await fetchStatus();
+      });
+
+      document.getElementById('gen-token').addEventListener('click', async () => {
+        await fetch('/api/admin/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({})
+        });
+        await fetchStatus();
+      });
+
+      fetchStatus();
+    </script>
+  </body>
+</html>
